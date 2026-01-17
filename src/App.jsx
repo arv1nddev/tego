@@ -437,21 +437,36 @@ const GameBoard = ({ state, onNodeClick, validMoves = [] }) => {
 };
 
 // ===== MAIN GAME COMPONENT =====
+// ===== MAIN GAME COMPONENT =====
 const TegoGame = () => {
   const [gameState, setGameState] = useState(null);
   const [validMoves, setValidMoves] = useState([]);
+  // State to toggle the AI options in the menu
+  const [showAiOptions, setShowAiOptions] = useState(false);
 
-  const startGame = (mode) => {
-    const playerTypes = mode === GameMode.VS_AI 
-      ? { RED: PlayerType.HUMAN, BLUE: PlayerType.AI }
-      : { RED: PlayerType.HUMAN, BLUE: PlayerType.HUMAN };
+  // Updated startGame to accept aiStarts parameter
+  const startGame = (mode, aiStarts = false) => {
+    let playerTypes;
+
+    if (mode === GameMode.VS_AI) {
+      // If AI starts, AI gets RED (Player 1), Human gets BLUE (Player 2)
+      // If Human starts, Human gets RED, AI gets BLUE
+      playerTypes = aiStarts 
+        ? { RED: PlayerType.AI, BLUE: PlayerType.HUMAN }
+        : { RED: PlayerType.HUMAN, BLUE: PlayerType.AI };
+    } else {
+      playerTypes = { RED: PlayerType.HUMAN, BLUE: PlayerType.HUMAN };
+    }
 
     setGameState(new GameState({ mode, playerTypes }));
     setValidMoves([]);
+    setShowAiOptions(false); // Reset menu state
   };
 
   const handleNodeClick = useCallback((nodeIndex) => {
     if (!gameState || gameState.phase === GamePhase.GAME_OVER) return;
+    
+    // Check strict equality against AI to prevent moving for the computer
     if (gameState.playerTypes[gameState.currentPlayer] === PlayerType.AI) return;
 
     if (gameState.phase === GamePhase.PLACEMENT) {
@@ -498,12 +513,23 @@ const TegoGame = () => {
   const undoMove = () => {
     if (!gameState || gameState.moveHistory.length === 0) return;
     
+    // When undoing against AI, we usually want to undo TWO moves (AI's and Player's)
+    // to get back to the Player's turn.
+    let stepsToUndo = 1;
+    if (gameState.mode === GameMode.VS_AI) {
+        // If the current player is AI, we just undo the previous Human move (1 step)
+        // If the current player is Human, we undo AI move AND Human move (2 steps)
+        // However, simple approach: Just undo 1 step at a time.
+        // User can click twice if they want to redo their turn.
+        stepsToUndo = 1;
+    }
+
     const newState = new GameState({
       mode: gameState.mode,
       playerTypes: gameState.playerTypes
     });
     
-    const historyToReplay = gameState.moveHistory.slice(0, -1);
+    const historyToReplay = gameState.moveHistory.slice(0, -stepsToUndo);
     let tempState = newState;
     
     historyToReplay.forEach(move => {
@@ -522,23 +548,25 @@ const TegoGame = () => {
 
   useEffect(() => {
     if (!gameState || gameState.phase === GamePhase.GAME_OVER) return;
-    if (gameState.playerTypes[gameState.currentPlayer] !== PlayerType.AI) return;
+    
+    // Check if it is currently the AI's turn
+    if (gameState.playerTypes[gameState.currentPlayer] === PlayerType.AI) {
+      const timer = setTimeout(() => {
+        const move = AI.getBestMove(gameState);
+        
+        if (move.type === 'place') {
+          const newState = GameLogic.placePiece(gameState, move.node);
+          setGameState(newState);
+        } else {
+          const selectState = gameState.copy();
+          selectState.selectedNode = move.from;
+          const newState = GameLogic.movePiece(selectState, move.from, move.to);
+          setGameState(newState);
+        }
+      }, 500); // 500ms delay for natural feel
 
-    const timer = setTimeout(() => {
-      const move = AI.getBestMove(gameState);
-      
-      if (move.type === 'place') {
-        const newState = GameLogic.placePiece(gameState, move.node);
-        setGameState(newState);
-      } else {
-        const selectState = gameState.copy();
-        selectState.selectedNode = move.from;
-        const newState = GameLogic.movePiece(selectState, move.from, move.to);
-        setGameState(newState);
-      }
-    }, 500);
-
-    return () => clearTimeout(timer);
+      return () => clearTimeout(timer);
+    }
   }, [gameState]);
 
   if (!gameState) {
@@ -551,6 +579,7 @@ const TegoGame = () => {
           </div>
           
           <div className="space-y-4">
+            {/* Two Player Button */}
             <button
               onClick={() => startGame(GameMode.TWO_PLAYER)}
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-4 px-6 rounded-lg flex items-center justify-center gap-3 transition-colors"
@@ -559,13 +588,42 @@ const TegoGame = () => {
               Two Players
             </button>
             
-            <button
-              onClick={() => startGame(GameMode.VS_AI)}
-              className="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-4 px-6 rounded-lg flex items-center justify-center gap-3 transition-colors"
-            >
-              <Cpu size={24} />
-              vs AI
-            </button>
+            {/* VS AI Section */}
+            {!showAiOptions ? (
+               <button
+               onClick={() => setShowAiOptions(true)}
+               className="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-4 px-6 rounded-lg flex items-center justify-center gap-3 transition-colors"
+             >
+               <Cpu size={24} />
+               vs AI
+             </button>
+            ) : (
+              <div className="bg-purple-50 p-4 rounded-lg border-2 border-purple-100 animate-in fade-in slide-in-from-top-2">
+                <p className="text-center text-purple-800 font-semibold mb-3">Who goes first?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => startGame(GameMode.VS_AI, false)}
+                    className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Play First
+                    <span className="block text-xs opacity-75">(Red)</span>
+                  </button>
+                  <button
+                    onClick={() => startGame(GameMode.VS_AI, true)}
+                    className="bg-purple-700 hover:bg-purple-800 text-white p-3 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    AI First
+                    <span className="block text-xs opacity-75">(Blue)</span>
+                  </button>
+                </div>
+                <button 
+                  onClick={() => setShowAiOptions(false)}
+                  className="w-full mt-2 text-xs text-gray-500 hover:text-gray-700 py-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
           
           <div className="mt-8 p-4 bg-gray-50 rounded-lg text-sm text-gray-700">
@@ -581,6 +639,8 @@ const TegoGame = () => {
       </div>
     );
   }
+
+  // ... (Rest of the Render logic remains identical) ...
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 flex items-center justify-center p-4">
